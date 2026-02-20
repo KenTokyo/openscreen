@@ -59,5 +59,51 @@ electron.contextBridge.exposeInMainWorld("electronAPI", {
   },
   getPlatform: () => {
     return electron.ipcRenderer.invoke("get-platform");
+  },
+  // --- AI Settings API ---
+  aiSettingsLoad: () => {
+    return electron.ipcRenderer.invoke("ai-settings-load");
+  },
+  aiSettingsSave: (update) => {
+    return electron.ipcRenderer.invoke("ai-settings-save", update);
+  },
+  aiSettingsSetApiKey: (provider, apiKey) => {
+    return electron.ipcRenderer.invoke("ai-settings-set-api-key", provider, apiKey);
+  },
+  aiSettingsDeleteApiKey: (provider) => {
+    return electron.ipcRenderer.invoke("ai-settings-delete-api-key", provider);
+  },
+  aiSettingsGetApiKeyStatus: (provider) => {
+    return electron.ipcRenderer.invoke("ai-settings-get-api-key-status", provider);
+  },
+  // --- AI Analysis API ---
+  aiSetApiKey: (apiKey) => {
+    return electron.ipcRenderer.invoke("ai-set-api-key", apiKey);
+  },
+  aiGetApiKeyStatus: () => {
+    return electron.ipcRenderer.invoke("ai-get-api-key-status");
+  },
+  aiStartAnalysis: (videoPath, config) => {
+    return electron.ipcRenderer.invoke("ai-start-analysis", { videoPath, config });
+  },
+  aiCancelAnalysis: (jobId) => {
+    return electron.ipcRenderer.invoke("ai-cancel-analysis", jobId);
+  },
+  aiGetJobStatus: (jobId) => {
+    return electron.ipcRenderer.invoke("ai-get-job-status", jobId);
+  },
+  aiGetArtifacts: (jobId) => {
+    return electron.ipcRenderer.invoke("ai-get-artifacts", jobId);
+  },
+  aiLoadPersistedArtifacts: (videoPath) => {
+    return electron.ipcRenderer.invoke("ai-load-persisted-artifacts", videoPath);
+  },
+  aiHasArtifacts: (videoPath) => {
+    return electron.ipcRenderer.invoke("ai-has-artifacts", videoPath);
+  },
+  onAIJobProgress: (callback) => {
+    const listener = (_event, status) => callback(status);
+    electron.ipcRenderer.on("ai-job-progress", listener);
+    return () => electron.ipcRenderer.removeListener("ai-job-progress", listener);
   }
 });

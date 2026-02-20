@@ -83,6 +83,9 @@ interface SettingsPanelProps {
   onGifSizePresetChange?: (preset: GifSizePreset) => void;
   gifOutputDimensions?: { width: number; height: number };
   onExport?: () => void;
+  trimCount?: number;
+  effectiveDurationMs?: number;
+  videoDurationMs?: number;
   selectedAnnotationId?: string | null;
   annotationRegions?: AnnotationRegion[];
   onAnnotationContentChange?: (id: string, content: string) => void;
@@ -93,6 +96,13 @@ interface SettingsPanelProps {
 }
 
 export default SettingsPanel;
+
+function formatDurationShort(ms: number): string {
+  const totalSec = Math.round(ms / 1000);
+  const min = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  return min > 0 ? `${min}:${sec.toString().padStart(2, '0')}` : `${sec}s`;
+}
 
 const ZOOM_DEPTH_OPTIONS: Array<{ depth: ZoomDepth; label: string }> = [
   { depth: 1, label: "1.25×" },
@@ -138,6 +148,9 @@ export function SettingsPanel({
   onGifSizePresetChange,
   gifOutputDimensions = { width: 1280, height: 720 },
   onExport,
+  trimCount = 0,
+  effectiveDurationMs,
+  videoDurationMs,
   selectedAnnotationId,
   annotationRegions = [],
   onAnnotationContentChange,
@@ -682,11 +695,21 @@ export function SettingsPanel({
           </div>
         )}
         
+        {trimCount > 0 && effectiveDurationMs !== undefined && videoDurationMs !== undefined && videoDurationMs > 0 && (
+          <div className="flex items-center justify-between text-[10px] text-slate-400 mb-2 px-1">
+            <span>{trimCount} {trimCount === 1 ? 'Cut' : 'Cuts'}</span>
+            <span>
+              {formatDurationShort(effectiveDurationMs)} / {formatDurationShort(videoDurationMs)}
+            </span>
+          </div>
+        )}
+
         <Button
           type="button"
           size="lg"
           onClick={onExport}
-          className="w-full py-5 text-sm font-semibold flex items-center justify-center gap-2 bg-[#34B27B] text-white rounded-xl shadow-lg shadow-[#34B27B]/20 hover:bg-[#34B27B]/90 hover:scale-[1.02] active:scale-[0.98] transition-all duration-200"
+          disabled={effectiveDurationMs !== undefined && effectiveDurationMs <= 0}
+          className="w-full py-5 text-sm font-semibold flex items-center justify-center gap-2 bg-[#34B27B] text-white rounded-xl shadow-lg shadow-[#34B27B]/20 hover:bg-[#34B27B]/90 hover:scale-[1.02] active:scale-[0.98] transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
         >
           <Download className="w-4 h-4" />
           Export {exportFormat === 'gif' ? 'GIF' : 'Video'}

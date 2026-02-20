@@ -11,6 +11,15 @@ interface ExportDialogProps {
   error: string | null;
   onCancel?: () => void;
   exportFormat?: 'mp4' | 'gif';
+  effectiveDurationMs?: number;
+  trimCount?: number;
+}
+
+function formatDurationShort(ms: number): string {
+  const totalSec = Math.round(ms / 1000);
+  const min = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  return min > 0 ? `${min}:${sec.toString().padStart(2, '0')}` : `${sec}s`;
 }
 
 export function ExportDialog({
@@ -21,6 +30,8 @@ export function ExportDialog({
   error,
   onCancel,
   exportFormat = 'mp4',
+  effectiveDurationMs,
+  trimCount = 0,
 }: ExportDialogProps) {
   const [showSuccess, setShowSuccess] = useState(false);
 
@@ -209,6 +220,14 @@ export function ExportDialog({
                   {progress.currentFrame} / {progress.totalFrames}
                 </div>
               </div>
+              {trimCount > 0 && effectiveDurationMs !== undefined && (
+                <div className="bg-white/5 rounded-xl p-3 border border-white/5 col-span-2">
+                  <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">Duration</div>
+                  <div className="text-slate-200 font-medium text-sm">
+                    {formatDurationShort(effectiveDurationMs)} ({trimCount} {trimCount === 1 ? 'cut' : 'cuts'} applied)
+                  </div>
+                </div>
+              )}
             </div>
 
             {onCancel && (

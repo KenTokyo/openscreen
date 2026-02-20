@@ -1,6 +1,6 @@
 
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
@@ -10,6 +10,10 @@ import PlaybackControls from "./PlaybackControls";
 import TimelineEditor from "./timeline/TimelineEditor";
 import { SettingsPanel } from "./SettingsPanel";
 import { ExportDialog } from "./ExportDialog";
+import { AIPanelSection } from "./ai/AIPanelSection";
+import type { Suggestion } from "./ai/types";
+import { mapSuggestionsToTimeline } from "./ai/mappers/suggestionTimelineMapper";
+import { normalizeTrimRegions, getEffectiveDurationMs } from "@/lib/exporter/trimNormalizer";
 
 import type { Span } from "dnd-timeline";
 import {
@@ -37,6 +41,8 @@ const WALLPAPER_PATHS = Array.from({ length: WALLPAPER_COUNT }, (_, i) => `/wall
 
 export default function VideoEditor() {
   const [videoPath, setVideoPath] = useState<string | null>(null);
+  const [rawVideoPath, setRawVideoPath] = useState<string | null>(null);
+  const [rightPanelTab, setRightPanelTab] = useState<'settings' | 'ai'>('settings');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -59,6 +65,7 @@ export default function VideoEditor() {
   const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
   const [showExportDialog, setShowExportDialog] = useState(false);
+  const [lastAIApplyIds, setLastAIApplyIds] = useState<string[]>([]);
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('16:9');
   const [exportQuality, setExportQuality] = useState<ExportQuality>('good');
   const [exportFormat, setExportFormat] = useState<ExportFormat>('mp4');
@@ -72,6 +79,12 @@ export default function VideoEditor() {
   const nextAnnotationIdRef = useRef(1);
   const nextAnnotationZIndexRef = useRef(1); // Track z-index for stacking order
   const exporterRef = useRef<VideoExporter | null>(null);
+
+  // Effektive Dauer nach Abzug aller Trims (fuer UI und Export-Validierung)
+  const effectiveDurationMs = useMemo(
+    () => getEffectiveDurationMs(duration * 1000, trimRegions),
+    [duration, trimRegions]
+  );
 
   // Helper to convert file path to proper file:// URL
   const toFileUrl = (filePath: string): string => {
@@ -97,6 +110,7 @@ export default function VideoEditor() {
         if (result.success && result.path) {
           const videoUrl = toFileUrl(result.path);
           setVideoPath(videoUrl);
+          setRawVideoPath(result.path);
         } else {
           setError('No video to load. Please record or select a video.');
         }
@@ -460,6 +474,9 @@ export default function VideoEditor() {
         videoPlaybackRef.current?.pause();
       }
 
+      // Normalisiere TrimRegions vor Export (sortieren, Overlaps mergen, clampen)
+      const normalizedTrims = normalizeTrimRegions(trimRegions, duration * 1000);
+
       const aspectRatioValue = getAspectRatioValue(aspectRatio);
       const sourceWidth = video.videoWidth || 1920;
       const sourceHeight = video.videoHeight || 1080;
@@ -481,7 +498,7 @@ export default function VideoEditor() {
           sizePreset: settings.gifConfig.sizePreset,
           wallpaper,
           zoomRegions,
-          trimRegions,
+          trimRegions: normalizedTrims,
           showShadow: shadowIntensity > 0,
           shadowIntensity,
           showBlur,
@@ -607,7 +624,7 @@ export default function VideoEditor() {
           codec: 'avc1.640033',
           wallpaper,
           zoomRegions,
-          trimRegions,
+          trimRegions: normalizedTrims,
           showShadow: shadowIntensity > 0,
           shadowIntensity,
           showBlur,
@@ -711,6 +728,83 @@ export default function VideoEditor() {
       setExportError(null);
     }
   }, []);
+
+  const handleApplyAISuggestions = useCallback((suggestions: Suggestion[]) => {
+    // Wenn bereits AI-Trims existieren, erst Undo ausfuehren (Re-Apply)
+    if (lastAIApplyIds.length > 0) {
+      setTrimRegions((prev) => prev.filter((r) => !lastAIApplyIds.includes(r.id)));
+      setLastAIApplyIds([]);
+    }
+
+    const result = mapSuggestionsToTimeline(suggestions, duration * 1000, {
+      mode: 'proposed-cuts',
+    });
+
+    const trimMappings = result.mappings.filter((m) => m.action === 'add-trim');
+
+    if (trimMappings.length === 0) {
+      const markerCount = result.totalMarkerCount;
+      if (markerCount > 0) {
+        toast.info(`Keine Schnitte notwendig. ${markerCount} Stellen als Info markiert.`);
+      } else {
+        toast.info('Keine anwendbaren Vorschlaege gefunden.');
+      }
+      return;
+    }
+
+    // Overlap-Check: AI-Trims die mit bestehenden manuellen Trims ueberlappen ueberspringen
+    const newIds: string[] = [];
+    const newRegions: TrimRegion[] = [];
+    let skippedCount = 0;
+
+    setTrimRegions((prev) => {
+      for (const mapping of trimMappings) {
+        const start = Math.round(mapping.startMs);
+        const end = Math.round(mapping.endMs);
+
+        // Pruefe Overlap mit bestehenden + bereits eingefuegten Trims
+        const allExisting = [...prev, ...newRegions];
+        const hasOverlap = allExisting.some(
+          (r) => end > r.startMs && start < r.endMs
+        );
+
+        if (hasOverlap) {
+          skippedCount++;
+          continue;
+        }
+
+        const id = `trim-${nextTrimIdRef.current++}`;
+        newIds.push(id);
+        newRegions.push({ id, startMs: start, endMs: end });
+      }
+
+      return [...prev, ...newRegions];
+    });
+
+    setLastAIApplyIds(newIds);
+
+    // Toast-Meldung
+    const appliedCount = newIds.length;
+    const markerCount = result.totalMarkerCount;
+    const parts: string[] = [];
+    if (appliedCount > 0) parts.push(`${appliedCount} Schnitte angewendet`);
+    if (skippedCount > 0) parts.push(`${skippedCount} uebersprungen (Overlap)`);
+    if (markerCount > 0) parts.push(`${markerCount} Info-Marker`);
+
+    if (appliedCount > 0) {
+      toast.success(parts.join(', '));
+    } else if (skippedCount > 0) {
+      toast.warning(`Alle ${skippedCount} Schnitte uebersprungen (Overlap mit bestehenden Trims).`);
+    }
+  }, [duration, lastAIApplyIds]);
+
+  const handleUndoAIApply = useCallback(() => {
+    if (lastAIApplyIds.length === 0) return;
+    const count = lastAIApplyIds.length;
+    setTrimRegions((prev) => prev.filter((r) => !lastAIApplyIds.includes(r.id)));
+    setLastAIApplyIds([]);
+    toast.info(`${count} AI-Schnitte rueckgaengig gemacht.`);
+  }, [lastAIApplyIds]);
 
   if (loading) {
     return (
@@ -830,55 +924,102 @@ export default function VideoEditor() {
           </PanelGroup>
         </div>
 
-          {/* Right section: settings panel */}
-          <SettingsPanel
-          selected={wallpaper}
-          onWallpaperChange={setWallpaper}
-          selectedZoomDepth={selectedZoomId ? zoomRegions.find(z => z.id === selectedZoomId)?.depth : null}
-          onZoomDepthChange={(depth) => selectedZoomId && handleZoomDepthChange(depth)}
-          selectedZoomId={selectedZoomId}
-          onZoomDelete={handleZoomDelete}
-          selectedTrimId={selectedTrimId}
-          onTrimDelete={handleTrimDelete}
-          shadowIntensity={shadowIntensity}
-          onShadowChange={setShadowIntensity}
-          showBlur={showBlur}
-          onBlurChange={setShowBlur}
-          motionBlurEnabled={motionBlurEnabled}
-          onMotionBlurChange={setMotionBlurEnabled}
-          borderRadius={borderRadius}
-          onBorderRadiusChange={setBorderRadius}
-          padding={padding}
-          onPaddingChange={setPadding}
-          cropRegion={cropRegion}
-          onCropChange={setCropRegion}
-          aspectRatio={aspectRatio}
-          videoElement={videoPlaybackRef.current?.video || null}
-          exportQuality={exportQuality}
-          onExportQualityChange={setExportQuality}
-          exportFormat={exportFormat}
-          onExportFormatChange={setExportFormat}
-          gifFrameRate={gifFrameRate}
-          onGifFrameRateChange={setGifFrameRate}
-          gifLoop={gifLoop}
-          onGifLoopChange={setGifLoop}
-          gifSizePreset={gifSizePreset}
-          onGifSizePresetChange={setGifSizePreset}
-          gifOutputDimensions={calculateOutputDimensions(
-            videoPlaybackRef.current?.video?.videoWidth || 1920,
-            videoPlaybackRef.current?.video?.videoHeight || 1080,
-            gifSizePreset,
-            GIF_SIZE_PRESETS
-          )}
-          onExport={handleOpenExportDialog}
-          selectedAnnotationId={selectedAnnotationId}
-          annotationRegions={annotationRegions}
-          onAnnotationContentChange={handleAnnotationContentChange}
-          onAnnotationTypeChange={handleAnnotationTypeChange}
-          onAnnotationStyleChange={handleAnnotationStyleChange}
-          onAnnotationFigureDataChange={handleAnnotationFigureDataChange}
-          onAnnotationDelete={handleAnnotationDelete}
-        />
+          {/* Right section: settings / AI panel with tabs */}
+          <div className="flex-[2] min-w-0 flex flex-col h-full">
+            {/* Tab-Switcher */}
+            <div className="flex gap-1 mb-2">
+              <button
+                onClick={() => setRightPanelTab('settings')}
+                className={`flex-1 text-[10px] font-medium py-1.5 rounded-lg border transition-all ${
+                  rightPanelTab === 'settings'
+                    ? 'bg-white/10 border-white/15 text-slate-200'
+                    : 'bg-transparent border-transparent text-slate-500 hover:text-slate-300'
+                }`}
+              >
+                Settings
+              </button>
+              <button
+                onClick={() => setRightPanelTab('ai')}
+                className={`flex-1 text-[10px] font-medium py-1.5 rounded-lg border transition-all ${
+                  rightPanelTab === 'ai'
+                    ? 'bg-[#34B27B]/10 border-[#34B27B]/30 text-[#34B27B]'
+                    : 'bg-transparent border-transparent text-slate-500 hover:text-slate-300'
+                }`}
+              >
+                AI Segments
+              </button>
+            </div>
+
+            {/* Settings Panel */}
+            {rightPanelTab === 'settings' && (
+              <SettingsPanel
+                selected={wallpaper}
+                onWallpaperChange={setWallpaper}
+                selectedZoomDepth={selectedZoomId ? zoomRegions.find(z => z.id === selectedZoomId)?.depth : null}
+                onZoomDepthChange={(depth) => selectedZoomId && handleZoomDepthChange(depth)}
+                selectedZoomId={selectedZoomId}
+                onZoomDelete={handleZoomDelete}
+                selectedTrimId={selectedTrimId}
+                onTrimDelete={handleTrimDelete}
+                shadowIntensity={shadowIntensity}
+                onShadowChange={setShadowIntensity}
+                showBlur={showBlur}
+                onBlurChange={setShowBlur}
+                motionBlurEnabled={motionBlurEnabled}
+                onMotionBlurChange={setMotionBlurEnabled}
+                borderRadius={borderRadius}
+                onBorderRadiusChange={setBorderRadius}
+                padding={padding}
+                onPaddingChange={setPadding}
+                cropRegion={cropRegion}
+                onCropChange={setCropRegion}
+                aspectRatio={aspectRatio}
+                videoElement={videoPlaybackRef.current?.video || null}
+                exportQuality={exportQuality}
+                onExportQualityChange={setExportQuality}
+                exportFormat={exportFormat}
+                onExportFormatChange={setExportFormat}
+                gifFrameRate={gifFrameRate}
+                onGifFrameRateChange={setGifFrameRate}
+                gifLoop={gifLoop}
+                onGifLoopChange={setGifLoop}
+                gifSizePreset={gifSizePreset}
+                onGifSizePresetChange={setGifSizePreset}
+                gifOutputDimensions={calculateOutputDimensions(
+                  videoPlaybackRef.current?.video?.videoWidth || 1920,
+                  videoPlaybackRef.current?.video?.videoHeight || 1080,
+                  gifSizePreset,
+                  GIF_SIZE_PRESETS
+                )}
+                onExport={handleOpenExportDialog}
+                trimCount={trimRegions.length}
+                effectiveDurationMs={effectiveDurationMs}
+                videoDurationMs={duration * 1000}
+                selectedAnnotationId={selectedAnnotationId}
+                annotationRegions={annotationRegions}
+                onAnnotationContentChange={handleAnnotationContentChange}
+                onAnnotationTypeChange={handleAnnotationTypeChange}
+                onAnnotationStyleChange={handleAnnotationStyleChange}
+                onAnnotationFigureDataChange={handleAnnotationFigureDataChange}
+                onAnnotationDelete={handleAnnotationDelete}
+              />
+            )}
+
+            {/* AI Panel */}
+            {rightPanelTab === 'ai' && (
+              <div className="flex-1 min-h-0 bg-[#09090b] border border-white/5 rounded-2xl p-4 shadow-xl overflow-hidden flex flex-col">
+                <AIPanelSection
+                  videoPath={rawVideoPath}
+                  onSeek={handleSeek}
+                  currentTimeSec={currentTime}
+                  durationSec={duration}
+                  onApplyTrimSuggestions={handleApplyAISuggestions}
+                  onUndoAIApply={handleUndoAIApply}
+                  hasAppliedSuggestions={lastAIApplyIds.length > 0}
+                />
+              </div>
+            )}
+          </div>
       </div>
 
       <Toaster theme="dark" className="pointer-events-auto" />
@@ -891,6 +1032,8 @@ export default function VideoEditor() {
         error={exportError}
         onCancel={handleCancelExport}
         exportFormat={exportFormat}
+        effectiveDurationMs={effectiveDurationMs}
+        trimCount={trimRegions.length}
       />
     </div>
   );

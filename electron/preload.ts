@@ -63,4 +63,52 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getPlatform: () => {
     return ipcRenderer.invoke('get-platform')
   },
+
+  // --- AI Settings API ---
+  aiSettingsLoad: () => {
+    return ipcRenderer.invoke('ai-settings-load')
+  },
+  aiSettingsSave: (update: Record<string, unknown>) => {
+    return ipcRenderer.invoke('ai-settings-save', update)
+  },
+  aiSettingsSetApiKey: (provider: string, apiKey: string) => {
+    return ipcRenderer.invoke('ai-settings-set-api-key', provider, apiKey)
+  },
+  aiSettingsDeleteApiKey: (provider: string) => {
+    return ipcRenderer.invoke('ai-settings-delete-api-key', provider)
+  },
+  aiSettingsGetApiKeyStatus: (provider: string) => {
+    return ipcRenderer.invoke('ai-settings-get-api-key-status', provider)
+  },
+
+  // --- AI Analysis API ---
+  aiSetApiKey: (apiKey: string) => {
+    return ipcRenderer.invoke('ai-set-api-key', apiKey)
+  },
+  aiGetApiKeyStatus: () => {
+    return ipcRenderer.invoke('ai-get-api-key-status')
+  },
+  aiStartAnalysis: (videoPath: string, config: Record<string, unknown>) => {
+    return ipcRenderer.invoke('ai-start-analysis', { videoPath, config })
+  },
+  aiCancelAnalysis: (jobId: string) => {
+    return ipcRenderer.invoke('ai-cancel-analysis', jobId)
+  },
+  aiGetJobStatus: (jobId: string) => {
+    return ipcRenderer.invoke('ai-get-job-status', jobId)
+  },
+  aiGetArtifacts: (jobId: string) => {
+    return ipcRenderer.invoke('ai-get-artifacts', jobId)
+  },
+  aiLoadPersistedArtifacts: (videoPath: string) => {
+    return ipcRenderer.invoke('ai-load-persisted-artifacts', videoPath)
+  },
+  aiHasArtifacts: (videoPath: string) => {
+    return ipcRenderer.invoke('ai-has-artifacts', videoPath)
+  },
+  onAIJobProgress: (callback: (status: unknown) => void) => {
+    const listener = (_event: unknown, status: unknown) => callback(status)
+    ipcRenderer.on('ai-job-progress', listener as (...args: unknown[]) => void)
+    return () => ipcRenderer.removeListener('ai-job-progress', listener as (...args: unknown[]) => void)
+  },
 })

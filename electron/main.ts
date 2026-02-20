@@ -4,6 +4,7 @@ import path from 'node:path'
 import fs from 'node:fs/promises'
 import { createHudOverlayWindow, createEditorWindow, createSourceSelectorWindow } from './windows'
 import { registerIpcHandlers } from './ipc/handlers'
+import { registerAIHandlers } from './ipc/aiHandlers'
 
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -162,5 +163,6 @@ app.whenReady().then(async () => {
       }
     }
   )
+  registerAIHandlers()
   createWindow()
 })

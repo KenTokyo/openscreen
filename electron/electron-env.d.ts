@@ -42,6 +42,37 @@ interface Window {
     getPlatform: () => Promise<string>
     hudOverlayHide: () => void;
     hudOverlayClose: () => void;
+
+    // AI Settings API
+    aiSettingsLoad: () => Promise<{ success: boolean; settings?: unknown; error?: string }>
+    aiSettingsSave: (update: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>
+    aiSettingsSetApiKey: (provider: string, apiKey: string) => Promise<{ success: boolean; error?: string }>
+    aiSettingsDeleteApiKey: (provider: string) => Promise<{ success: boolean; error?: string }>
+    aiSettingsGetApiKeyStatus: (provider: string) => Promise<{ hasKey: boolean }>
+
+    // AI Analysis API (Legacy - genutzt von AIPanelSection)
+    aiSetApiKey: (apiKey: string) => Promise<{ success: boolean }>
+    aiGetApiKeyStatus: () => Promise<{ hasKey: boolean }>
+    aiStartAnalysis: (videoPath: string, config: Record<string, unknown>) => Promise<{
+      success: boolean
+      jobId?: string
+      error?: string
+    }>
+    aiCancelAnalysis: (jobId: string) => Promise<{ success: boolean }>
+    aiGetJobStatus: (jobId: string) => Promise<unknown>
+    aiGetArtifacts: (jobId: string) => Promise<{
+      success: boolean
+      transcript?: unknown
+      suggestions?: unknown
+      error?: string
+    }>
+    aiLoadPersistedArtifacts: (videoPath: string) => Promise<{
+      transcript?: unknown
+      suggestions?: unknown
+      jobStatus?: unknown
+    }>
+    aiHasArtifacts: (videoPath: string) => Promise<{ hasArtifacts: boolean }>
+    onAIJobProgress: (callback: (status: unknown) => void) => () => void
   }
 }
 
